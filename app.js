@@ -120,20 +120,83 @@ const STORE_KEY = "whatsdisco_state_v1";
 let friendsTab = "all";
 let state = load();
 
+// currentUserId è per-tab (sessionStorage), così tab diverse possono essere account diversi
+const SESSION_KEY = "whatsdisco_current_user";
+function loadCurrentUserId() { return sessionStorage.getItem(SESSION_KEY); }
+function saveCurrentUserId(id) {
+  if (id) sessionStorage.setItem(SESSION_KEY, id);
+  else sessionStorage.removeItem(SESSION_KEY);
+}
+
 function load() {
   try {
     const raw = localStorage.getItem(STORE_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const s = JSON.parse(raw);
+      s.currentUserId = loadCurrentUserId(); // override con quello della tab
+      return s;
+    }
   } catch (e) {}
   return freshState();
 }
 function save() {
   try {
-    localStorage.setItem(STORE_KEY, JSON.stringify(state));
+    // Persist currentUserId nella sessione (per-tab), non in localStorage
+    saveCurrentUserId(state.currentUserId);
+    // Lo stato condiviso non include currentUserId
+    const { currentUserId, ...rest } = state;
+    localStorage.setItem(STORE_KEY, JSON.stringify(rest));
   } catch (e) {
     console.error("Errore salvataggio:", e);
     alert("Spazio di archiviazione pieno. Prova a usare immagini più piccole per avatar/icone, oppure apri le impostazioni del profilo e clicca 'Resetta dati' se vuoi ripartire da zero.");
   }
+}
+
+// ---------- REALTIME SYNC tra TAB dello stesso browser ----------
+// Quando un'altra tab modifica lo stato, ricarico e aggiorno l'UI.
+// (Per il realtime tra dispositivi diversi servirà un backend con WebSocket.)
+window.addEventListener("storage", (e) => {
+  if (e.key !== STORE_KEY || !e.newValue) return;
+  const prevState = state;
+  try { state = JSON.parse(e.newValue); } catch { return; }
+  // Mantieni il currentUserId di QUESTA tab (ogni tab può avere account diversi)
+  state.currentUserId = prevState.currentUserId;
+  // Suona se è arrivato un messaggio nuovo o richiesta amicizia
+  if (hasNewIncomingFor(prevState, state, prevState.currentUserId)) playNotifSound();
+  if (state.currentUserId && state.users[state.currentUserId]) renderAll();
+});
+function hasNewIncomingFor(oldS, newS, myId) {
+  if (!myId) return false;
+  // Nuova richiesta di amicizia in arrivo
+  const oldFR = (oldS.friendRequests || []).filter(r => r.toId === myId && r.status === "pending").length;
+  const newFR = (newS.friendRequests || []).filter(r => r.toId === myId && r.status === "pending").length;
+  if (newFR > oldFR) return true;
+  // Nuovo messaggio in una mia DM
+  for (const did in (newS.dms || {})) {
+    const nd = newS.dms[did]; const od = oldS.dms?.[did];
+    if (!nd.participants.includes(myId)) continue;
+    const oldLen = od?.messages?.length || 0;
+    const newLen = nd.messages?.length || 0;
+    if (newLen > oldLen) {
+      const last = nd.messages[newLen - 1];
+      if (last && last.authorId !== myId) return true;
+    }
+  }
+  // Nuovo messaggio in un gruppo di cui faccio parte
+  for (const gid in (newS.groups || {})) {
+    const g = newS.groups[gid];
+    if (!g.members?.includes(myId)) continue;
+    const og = oldS.groups?.[gid];
+    for (const ch of g.channels || []) {
+      const newLen = g.messages?.[ch.id]?.length || 0;
+      const oldLen = og?.messages?.[ch.id]?.length || 0;
+      if (newLen > oldLen) {
+        const last = g.messages[ch.id][newLen - 1];
+        if (last && last.authorId !== myId && !last.system) return true;
+      }
+    }
+  }
+  return false;
 }
 
 function freshState() {
@@ -481,22 +544,56 @@ function renderChat() {
       continue;
     }
     const author = state.users[m.authorId] || { name: "?", avatar: defaultAvatar("?") };
-    const grouped = (author.id === lastAuthor) && (m.ts - lastTs < 5 * 60 * 1000);
-    const row = el("div", "message" + (grouped ? " grouped" : ""));
+    const isReply = !!m.replyTo;
+    const grouped = (author.id === lastAuthor) && (m.ts - lastTs < 5 * 60 * 1000) && !isReply;
+    const mentionsMe = messageMentionsMe(m.text);
+    const row = el("div", "message" + (grouped ? " grouped" : "") + (mentionsMe ? " mentions-me" : ""));
+    row.dataset.msgId = m.id;
     const isCreatorInGroup = v.type === "group" && state.groups[v.groupId].creatorId === author.id;
     const crownClass = isCreatorInGroup ? " crown" : "";
+
+    // Reply reference (riga citazione sopra)
+    let replyHtml = "";
+    if (isReply) {
+      const refMsg = messages.find(mm => mm.id === m.replyTo);
+      if (refMsg) {
+        const refAuthor = state.users[refMsg.authorId] || { name: "?", avatar: defaultAvatar("?") };
+        replyHtml = `<div class="message-reply-ref" data-jump-to="${refMsg.id}">
+          <img src="${refAuthor.avatar}" />
+          <span class="reply-author">${esc(refAuthor.name)}</span>
+          <span class="reply-text">${renderMessageText(refMsg.text || "[allegato]").replace(/<[^>]+>/g, "")}</span>
+        </div>`;
+      }
+    }
+
     let attachHtml = "";
     if (m.attachments) {
       for (let i = 0; i < m.attachments.length; i++) {
         const att = m.attachments[i];
-        // Compatibilità: vecchi messaggi hanno att.data (data URL), nuovi hanno att.attachmentId (IDB)
         const srcAttr = att.data ? `src="${att.data}"` : `data-att-id="${att.attachmentId}"`;
         if (att.type.startsWith("image/")) attachHtml += `<div class="message-attachment"><img ${srcAttr} /></div>`;
         else if (att.type.startsWith("video/")) attachHtml += `<div class="message-attachment"><video controls ${srcAttr}></video></div>`;
         else if (att.type.startsWith("audio/")) attachHtml += `<div class="voice-message"><audio controls ${srcAttr}></audio><span class="voice-message-duration">${att.duration || ""}</span></div>`;
       }
     }
+
+    // Reazioni
+    let reactionsHtml = "";
+    if (m.reactions && Object.keys(m.reactions).length > 0) {
+      reactionsHtml = '<div class="reactions">';
+      for (const emoji in m.reactions) {
+        const users = m.reactions[emoji];
+        if (!users.length) continue;
+        const mine = users.includes(state.currentUserId);
+        reactionsHtml += `<div class="reaction${mine ? " mine" : ""}" data-emoji="${esc(emoji)}"><span>${esc(emoji)}</span><span class="reaction-count">${users.length}</span></div>`;
+      }
+      reactionsHtml += '</div>';
+    }
+
+    const editedHtml = m.edited ? '<span class="message-edited">(modificato)</span>' : '';
+
     row.innerHTML = `
+      ${replyHtml}
       <img class="message-avatar" src="${author.avatar}" />
       <div class="message-body">
         <div class="message-header">
@@ -504,12 +601,47 @@ function renderChat() {
           <span class="message-time">${fmtTime(m.ts)}</span>
         </div>
         <div class="message-content">
-          ${m.text ? `<div class="message-text">${esc(m.text)}</div>` : ""}
+          ${m.text ? `<div class="message-text">${renderMessageText(m.text)}${editedHtml}</div>` : ""}
           ${attachHtml}
+          ${reactionsHtml}
         </div>
+      </div>
+      <div class="message-actions">
+        <button class="message-action-btn" data-action="quick-react" title="Reazione 👍">👍</button>
+        <button class="message-action-btn" data-action="reply" title="Rispondi">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/></svg>
+        </button>
+        ${m.authorId === state.currentUserId ? '<button class="message-action-btn" data-action="edit" title="Modifica"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75l11-11-3.75-3.75L3 17.25zM20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0L15.13 5.12l3.75 3.75 1.82-1.83z"/></svg></button>' : ''}
+        <button class="message-action-btn" data-action="more" title="Altro">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+        </button>
       </div>`;
+
     row.querySelector(".message-avatar")?.addEventListener("click", (ev) => showProfilePopup(author.id, ev));
     row.querySelector(".message-author")?.addEventListener("click", (ev) => showProfilePopup(author.id, ev));
+    // Mentions clickable
+    row.querySelectorAll(".mention").forEach(elm => {
+      elm.addEventListener("click", (ev) => {
+        const name = elm.textContent.replace(/^@/, "");
+        const u = Object.values(state.users).find(x => x.name === name);
+        if (u) showProfilePopup(u.id, ev);
+      });
+    });
+    // Reaction toggles
+    row.querySelectorAll(".reaction").forEach(rEl => {
+      rEl.addEventListener("click", () => toggleReaction(m.id, rEl.dataset.emoji));
+    });
+    // Hover action bar
+    row.querySelectorAll(".message-action-btn").forEach(btn => {
+      btn.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        const action = btn.dataset.action;
+        if (action === "quick-react") toggleReaction(m.id, "👍");
+        else if (action === "reply") startReply(m.id);
+        else if (action === "edit") startEdit(m.id);
+        else if (action === "more") openMessageContextMenu(m.id, ev);
+      });
+    });
     // Carica gli allegati da IndexedDB (asincrono)
     row.querySelectorAll("[data-att-id]").forEach(async (elm) => {
       const url = await getAttachmentURL(elm.dataset.attId);
@@ -520,6 +652,100 @@ function renderChat() {
   }
   box.scrollTop = box.scrollHeight;
 }
+
+// Menu contestuale del messaggio (3 puntini hover)
+function openMessageContextMenu(messageId, ev) {
+  const m = findMessage(messageId); if (!m) return;
+  const isMine = m.authorId === state.currentUserId;
+  const items = [];
+  // Reazioni quick
+  items.push({
+    customHtml: `<div class="reactions-quick">
+      ${["👍","✅","😭","❤️","🔥","😂"].map(e => `<button data-emoji="${e}">${e}</button>`).join("")}
+      <button data-action="more-emoji" title="Altro">➕</button>
+    </div>`,
+    handler: (root) => {
+      root.querySelectorAll("[data-emoji]").forEach(b => b.addEventListener("click", () => {
+        toggleReaction(messageId, b.dataset.emoji); hideContextMenu();
+      }));
+      root.querySelector('[data-action="more-emoji"]')?.addEventListener("click", () => {
+        const e = prompt("Inserisci un emoji:", "🎉");
+        if (e) { toggleReaction(messageId, e); hideContextMenu(); }
+      });
+    }
+  });
+  if (isMine) items.push({ label: "Modifica il messaggio", icon: pencilIcon(), onClick: () => { startEdit(messageId); hideContextMenu(); } });
+  items.push({ label: "Rispondi", icon: replyIcon(), onClick: () => { startReply(messageId); hideContextMenu(); } });
+  items.push({ label: "Inoltra", icon: forwardIcon(), onClick: () => { forwardMessage(messageId); hideContextMenu(); } });
+  if (m.text) items.push({ label: "Copia il testo", icon: copyIcon(), onClick: () => { navigator.clipboard?.writeText(m.text); hideContextMenu(); } });
+  items.push({ label: m.pinned ? "Stacca il messaggio" : "Attacca il messaggio", icon: pinIcon(), onClick: () => { m.pinned = !m.pinned; save(); renderChat(); hideContextMenu(); } });
+  items.push({ label: "Segnala come non letto", icon: unreadIcon(), onClick: () => { m.unreadFlag = true; save(); renderChat(); hideContextMenu(); } });
+  items.push({ label: "Copia il link del messaggio", icon: linkIcon(), onClick: () => { navigator.clipboard?.writeText(`whatsdisco://message/${messageId}`); hideContextMenu(); } });
+  if (m.text) items.push({ label: "Ascolta il messaggio", icon: speakerIcon(), onClick: () => { speakMessage(m.text); hideContextMenu(); } });
+  if (isMine) {
+    items.push({ divider: true });
+    items.push({ label: "Elimina il messaggio", icon: trashIcon(), danger: true, onClick: () => { if (confirm("Eliminare questo messaggio?")) { deleteMessage(messageId); hideContextMenu(); } } });
+  }
+  items.push({ label: "Copia ID messaggio", icon: idIcon(), onClick: () => { navigator.clipboard?.writeText(messageId); hideContextMenu(); } });
+  showContextMenu(items, ev.clientX, ev.clientY);
+}
+
+function speakMessage(text) {
+  try {
+    const u = new SpeechSynthesisUtterance(text);
+    u.lang = "it-IT";
+    speechSynthesis.cancel();
+    speechSynthesis.speak(u);
+  } catch (e) { alert("Sintesi vocale non disponibile"); }
+}
+
+function forwardMessage(messageId) {
+  const m = findMessage(messageId); if (!m) return;
+  const me = getCurrentUser();
+  // Costruisci lista di destinazioni: amici (DM) + miei gruppi
+  const friendIds = state.friends.filter(p => p.includes(me.id)).map(p => p.find(x => x !== me.id));
+  const friends = friendIds.map(id => state.users[id]).filter(Boolean);
+  const myGroups = Object.values(state.groups).filter(g => g.members.includes(me.id));
+  const choices = [
+    ...friends.map(f => ({ label: `@${f.name}`, action: () => forwardToDM(f.id, m) })),
+    ...myGroups.map(g => ({ label: `# ${g.name}`, action: () => forwardToGroup(g.id, m) }))
+  ];
+  if (!choices.length) { alert("Non hai amici o gruppi a cui inoltrare."); return; }
+  const labels = choices.map((c, i) => `${i + 1}. ${c.label}`).join("\n");
+  const idx = prompt(`Inoltra a:\n${labels}\n\nInserisci il numero:`);
+  const n = parseInt(idx) - 1;
+  if (n >= 0 && n < choices.length) { choices[n].action(); alert("Messaggio inoltrato."); }
+}
+function forwardToDM(otherId, m) {
+  const me = getCurrentUser();
+  let dm = Object.values(state.dms).find(d => d.participants.includes(me.id) && d.participants.includes(otherId));
+  if (!dm) { dm = { id: "dm_" + uid(), participants: [me.id, otherId], messages: [] }; state.dms[dm.id] = dm; }
+  dm.messages.push({ id: "m_" + uid(), authorId: me.id, ts: now(), text: m.text, attachments: m.attachments || [], reactions: {}, forwarded: true });
+  save();
+}
+function forwardToGroup(groupId, m) {
+  const me = getCurrentUser();
+  const g = state.groups[groupId];
+  const ch = g.channels.find(c => c.type === "text");
+  if (!ch) return;
+  if (!g.messages) g.messages = {};
+  if (!g.messages[ch.id]) g.messages[ch.id] = [];
+  g.messages[ch.id].push({ id: "m_" + uid(), authorId: me.id, ts: now(), text: m.text, attachments: m.attachments || [], reactions: {}, forwarded: true });
+  save();
+}
+
+// Icone SVG inline
+function svgI(p) { return `<svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">${p}</svg>`; }
+function pencilIcon() { return svgI('<path d="M3 17.25V21h3.75l11-11-3.75-3.75L3 17.25zM20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0L15.13 5.12l3.75 3.75 1.82-1.83z"/>'); }
+function replyIcon() { return svgI('<path d="M10 9V5l-7 7 7 7v-4.1c5 0 8.5 1.6 11 5.1-1-5-4-10-11-11z"/>'); }
+function forwardIcon() { return svgI('<path d="M14 9V5l7 7-7 7v-4.1c-5 0-8.5 1.6-11 5.1 1-5 4-10 11-11z"/>'); }
+function copyIcon() { return svgI('<path d="M16 1H4a2 2 0 0 0-2 2v14h2V3h12V1zm3 4H8a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2zm0 16H8V7h11v14z"/>'); }
+function pinIcon() { return svgI('<path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z"/>'); }
+function unreadIcon() { return svgI('<circle cx="12" cy="12" r="6"/>'); }
+function linkIcon() { return svgI('<path d="M3.9 12c0-1.71 1.39-3.1 3.1-3.1h4V7H7a5 5 0 0 0 0 10h4v-1.9H7c-1.71 0-3.1-1.39-3.1-3.1zM8 13h8v-2H8v2zm9-6h-4v1.9h4c1.71 0 3.1 1.39 3.1 3.1s-1.39 3.1-3.1 3.1h-4V17h4a5 5 0 0 0 0-10z"/>'); }
+function speakerIcon() { return svgI('<path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3a4.5 4.5 0 0 0-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4-1 7-4.66 7-8.77S18 4.23 14 3.23z"/>'); }
+function trashIcon() { return svgI('<path d="M6 19a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>'); }
+function idIcon() { return svgI('<path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2zm-9 11H6v-1.5h5V15zm0-3H6v-1.5h5V12zm0-3H6V7.5h5V9zm6.55 6L13 11.5l1-1 1.55 1.55L18.5 9l1 1L15.55 15z"/>'); }
 
 // ---------- FRIENDS PAGE ----------
 function renderFriendsPage() {
@@ -837,10 +1063,22 @@ $("homeBtn").addEventListener("click", () => { state.currentView = { type: "home
 $("friendsBtn").addEventListener("click", () => { state.currentView = { type: "home", subview: "friends" }; save(); renderAll(); });
 
 // ---------- MESSAGGI ----------
+// stato editor
+let replyingTo = null; // { messageId, authorName, snippet }
+let editingMessageId = null;
+
 function sendMessage(text, attachments = []) {
   const u = getCurrentUser();
   const v = state.currentView;
-  const msg = { id: "m_" + uid(), authorId: u.id, ts: now(), text, attachments };
+  const msg = {
+    id: "m_" + uid(),
+    authorId: u.id,
+    ts: now(),
+    text,
+    attachments,
+    reactions: {},
+    replyTo: replyingTo?.messageId || null
+  };
   if (v.type === "dm") {
     state.dms[v.id].messages.push(msg);
   } else if (v.type === "group") {
@@ -849,14 +1087,192 @@ function sendMessage(text, attachments = []) {
     if (!g.messages[v.channelId]) g.messages[v.channelId] = [];
     g.messages[v.channelId].push(msg);
   }
+  clearReply();
   save(); renderChat();
 }
 
+function getCurrentMessages() {
+  const v = state.currentView;
+  if (v.type === "dm") return state.dms[v.id]?.messages || [];
+  if (v.type === "group") return state.groups[v.groupId]?.messages?.[v.channelId] || [];
+  return [];
+}
+function findMessage(messageId) {
+  return getCurrentMessages().find(m => m.id === messageId);
+}
+function deleteMessage(messageId) {
+  const v = state.currentView;
+  if (v.type === "dm") {
+    const d = state.dms[v.id];
+    d.messages = d.messages.filter(m => m.id !== messageId);
+  } else if (v.type === "group") {
+    const g = state.groups[v.groupId];
+    g.messages[v.channelId] = (g.messages[v.channelId] || []).filter(m => m.id !== messageId);
+  }
+  save(); renderChat();
+}
+function toggleReaction(messageId, emoji) {
+  const m = findMessage(messageId); if (!m) return;
+  const myId = state.currentUserId;
+  if (!m.reactions) m.reactions = {};
+  const arr = m.reactions[emoji] || [];
+  if (arr.includes(myId)) {
+    m.reactions[emoji] = arr.filter(x => x !== myId);
+    if (m.reactions[emoji].length === 0) delete m.reactions[emoji];
+  } else {
+    m.reactions[emoji] = [...arr, myId];
+  }
+  save(); renderChat();
+}
+function startReply(messageId) {
+  const m = findMessage(messageId); if (!m) return;
+  const author = state.users[m.authorId];
+  replyingTo = { messageId, authorName: author?.name || "??", snippet: (m.text || "[allegato]").slice(0, 80) };
+  $("replyPreviewName").textContent = replyingTo.authorName;
+  $("replyPreview").classList.remove("hidden");
+  $("messageInput").focus();
+}
+function clearReply() {
+  replyingTo = null;
+  $("replyPreview").classList.add("hidden");
+}
+function startEdit(messageId) {
+  const m = findMessage(messageId); if (!m) return;
+  if (m.authorId !== state.currentUserId) return;
+  editingMessageId = messageId;
+  $("messageInput").value = m.text || "";
+  $("editPreview").classList.remove("hidden");
+  $("messageInput").focus();
+}
+function clearEdit() {
+  editingMessageId = null;
+  $("editPreview").classList.add("hidden");
+  $("messageInput").value = "";
+}
+function applyEdit(newText) {
+  const m = findMessage(editingMessageId); if (!m) return;
+  m.text = newText;
+  m.edited = true;
+  clearEdit();
+  save(); renderChat();
+}
+$("cancelReplyBtn").addEventListener("click", clearReply);
+$("cancelEditBtn").addEventListener("click", clearEdit);
+
+// Render testo con menzioni e mantieni l'escaping HTML
+function renderMessageText(text) {
+  if (!text) return "";
+  const me = getCurrentUser();
+  // Trova nomi di tutti gli utenti, ordinati per lunghezza decrescente
+  const allNames = Object.values(state.users).map(u => u.name).sort((a, b) => b.length - a.length);
+  let out = esc(text);
+  // Sostituisci @nome con span. Lavora sulla stringa già escapata.
+  for (const name of allNames) {
+    const escName = esc(name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const re = new RegExp("@" + escName + "(?![\\w])", "g");
+    const isMe = name === me?.name;
+    out = out.replace(re, `<span class="mention${isMe ? " self" : ""}">@${esc(name)}</span>`);
+  }
+  return out;
+}
+function messageMentionsMe(text) {
+  const me = getCurrentUser(); if (!me || !text) return false;
+  return new RegExp("@" + esc(me.name).replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "(?![\\w])").test(text);
+}
+
+// ---------- @MENTION AUTOCOMPLETE ----------
+let mentionState = null; // { startIdx, query, candidates, activeIdx }
+
+function getMentionCandidates() {
+  // Restituisce la lista di utenti menzionabili nel contesto attuale
+  const v = state.currentView;
+  const me = getCurrentUser();
+  if (v.type === "group") {
+    const g = state.groups[v.groupId];
+    return g.members.map(id => state.users[id]).filter(u => u && u.id !== me.id);
+  }
+  if (v.type === "dm") {
+    const d = state.dms[v.id];
+    const otherId = d.participants.find(p => p !== me.id);
+    return [state.users[otherId]].filter(Boolean);
+  }
+  return [];
+}
+
+function updateMentionPopup() {
+  const input = $("messageInput");
+  const text = input.value;
+  const caret = input.selectionStart;
+  // Trova l'ultimo @ prima del caret, senza spazi dopo
+  let i = caret - 1;
+  let at = -1;
+  while (i >= 0) {
+    const ch = text[i];
+    if (ch === "@") { at = i; break; }
+    if (ch === " " || ch === "\n") break;
+    i--;
+  }
+  if (at === -1) { hideMentionPopup(); return; }
+  const query = text.slice(at + 1, caret).toLowerCase();
+  const candidates = getMentionCandidates().filter(u => u.name.toLowerCase().includes(query)).slice(0, 8);
+  if (!candidates.length) { hideMentionPopup(); return; }
+  mentionState = { startIdx: at, query, candidates, activeIdx: 0 };
+  renderMentionPopup();
+}
+
+function renderMentionPopup() {
+  const pop = $("mentionPopup");
+  pop.innerHTML = '<div class="mention-popup-header">MEMBRI</div>';
+  mentionState.candidates.forEach((u, i) => {
+    const item = el("div", "mention-item" + (i === mentionState.activeIdx ? " active" : ""));
+    item.innerHTML = `<img src="${u.avatar}" /><span>${esc(u.name)}</span><span class="tag">${esc(makeTag(u))}</span>`;
+    item.addEventListener("mousedown", (ev) => { ev.preventDefault(); pickMention(i); });
+    pop.appendChild(item);
+  });
+  pop.classList.remove("hidden");
+}
+
+function hideMentionPopup() {
+  $("mentionPopup").classList.add("hidden");
+  mentionState = null;
+}
+
+function pickMention(idx) {
+  if (!mentionState) return;
+  const u = mentionState.candidates[idx]; if (!u) return;
+  const input = $("messageInput");
+  const text = input.value;
+  const before = text.slice(0, mentionState.startIdx);
+  const after = text.slice(input.selectionStart);
+  const inserted = `@${u.name} `;
+  input.value = before + inserted + after;
+  const newCaret = before.length + inserted.length;
+  input.setSelectionRange(newCaret, newCaret);
+  hideMentionPopup();
+  input.focus();
+}
+
+$("messageInput").addEventListener("input", () => updateMentionPopup());
+$("messageInput").addEventListener("click", () => updateMentionPopup());
+
 $("messageInput").addEventListener("keydown", (e) => {
+  // Mention navigation
+  if (mentionState && !$("mentionPopup").classList.contains("hidden")) {
+    if (e.key === "ArrowDown") { e.preventDefault(); mentionState.activeIdx = (mentionState.activeIdx + 1) % mentionState.candidates.length; renderMentionPopup(); return; }
+    if (e.key === "ArrowUp") { e.preventDefault(); mentionState.activeIdx = (mentionState.activeIdx - 1 + mentionState.candidates.length) % mentionState.candidates.length; renderMentionPopup(); return; }
+    if (e.key === "Tab" || e.key === "Enter") { e.preventDefault(); pickMention(mentionState.activeIdx); return; }
+    if (e.key === "Escape") { e.preventDefault(); hideMentionPopup(); return; }
+  }
+  // Annulla edit con ESC
+  if (e.key === "Escape") {
+    if (editingMessageId) { e.preventDefault(); clearEdit(); return; }
+    if (replyingTo) { e.preventDefault(); clearReply(); return; }
+  }
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
     const text = e.target.value.trim();
     if (!text) return;
+    if (editingMessageId) { applyEdit(text); return; }
     sendMessage(text, []);
     e.target.value = "";
   }
@@ -1094,7 +1510,15 @@ $("profileMoreBtn").addEventListener("click", (e) => {
 function showContextMenu(items, x, y) {
   const menu = $("contextMenu");
   menu.innerHTML = "";
+  const handlers = [];
   for (const it of items) {
+    if (it.customHtml) {
+      const wrap = document.createElement("div");
+      wrap.innerHTML = it.customHtml;
+      while (wrap.firstChild) menu.appendChild(wrap.firstChild);
+      if (it.handler) handlers.push(it.handler);
+      continue;
+    }
     if (it.divider) { menu.appendChild(el("div", "menu-divider")); continue; }
     if (it.isLabel) { menu.appendChild(el("div", "submenu-label", it.label)); continue; }
     const item = el("div", "menu-item" + (it.danger ? " danger" : ""));
@@ -1102,8 +1526,12 @@ function showContextMenu(items, x, y) {
     item.addEventListener("click", it.onClick);
     menu.appendChild(item);
   }
+  // Esegui handlers dei custom items dopo l'inserimento
+  for (const h of handlers) h(menu);
   menu.classList.remove("hidden");
-  const w = 220, h = items.length * 36 + 20;
+  // Calcola altezza approssimativa
+  const w = 240;
+  const h = menu.offsetHeight || items.length * 36 + 20;
   menu.style.left = Math.min(x, window.innerWidth - w - 8) + "px";
   menu.style.top = Math.min(y, window.innerHeight - h - 8) + "px";
 }
