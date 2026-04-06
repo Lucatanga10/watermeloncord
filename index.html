@@ -112,15 +112,26 @@
           </div>
           <div id="friendsTabContent" class="friends-tab-content"></div>
         </div>
-        <div id="inputArea" class="input-area">
-          <button class="input-btn" id="attachBtn" title="Allega file">
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="11" fill="#b9bbbe"/><path d="M12 6v12M6 12h12" stroke="#313338" stroke-width="2" stroke-linecap="round"/></svg>
-          </button>
-          <input type="file" id="fileInput" accept="image/*,video/*" hidden multiple />
-          <input type="text" id="messageInput" placeholder="Invia un messaggio" />
-          <button class="input-btn" id="recordBtn" title="Registra messaggio vocale">
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
-          </button>
+        <div id="inputContainer" class="input-container">
+          <div id="replyPreview" class="reply-preview hidden">
+            <span>Stai rispondendo a <b id="replyPreviewName"></b></span>
+            <button id="cancelReplyBtn">×</button>
+          </div>
+          <div id="editPreview" class="reply-preview hidden">
+            <span>Stai modificando il messaggio</span>
+            <button id="cancelEditBtn">×</button>
+          </div>
+          <div id="mentionPopup" class="mention-popup hidden"></div>
+          <div id="inputArea" class="input-area">
+            <button class="input-btn" id="attachBtn" title="Allega file">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="11" fill="#b9bbbe"/><path d="M12 6v12M6 12h12" stroke="#313338" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+            <input type="file" id="fileInput" accept="image/*,video/*" hidden multiple />
+            <input type="text" id="messageInput" placeholder="Invia un messaggio" autocomplete="off" />
+            <button class="input-btn" id="recordBtn" title="Registra messaggio vocale">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+            </button>
+          </div>
         </div>
         <div id="recordingBar" class="recording-bar hidden">
           <div class="rec-dot"></div>
