@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>Watermeloncord</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ctext y='80' font-size='80'%3E%F0%9F%8D%89%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+
+<!-- SCHERMATA LOGIN -->
+<div id="loginScreen" class="login-screen">
+  <div class="login-box">
+    <h1>🍉 Watermeloncord</h1>
+    <p id="loginSubtitle">Accedi o registrati</p>
+
+    <div class="login-tabs">
+      <button class="login-tab active" data-tab="login">Accedi</button>
+      <button class="login-tab" data-tab="register">Registrati</button>
+    </div>
+
+    <!-- LOGIN -->
+    <div id="loginForm">
+      <input type="text" id="loginUsername" placeholder="Nome utente" maxlength="24" autocomplete="username" />
+      <input type="password" id="loginPassword" placeholder="Password" autocomplete="current-password" />
+      <button id="loginBtn">Accedi</button>
+      <div id="loginError" class="login-error hidden"></div>
+
+      <div id="quickAccountsWrap" class="hidden">
+        <div class="quick-label">Account su questo dispositivo</div>
+        <div id="existingAccountsList" class="login-accounts"></div>
+      </div>
+    </div>
+
+    <!-- REGISTER -->
+    <div id="registerForm" class="hidden">
+      <div class="login-avatar-wrap">
+        <img id="loginAvatarPreview" class="login-avatar" src="" alt="" />
+        <label class="login-avatar-btn">
+          Scegli avatar
+          <input type="file" id="loginAvatarInput" accept="image/*,image/gif" hidden />
+        </label>
+      </div>
+      <input type="text" id="regUsername" placeholder="Nome utente (univoco)" maxlength="24" autocomplete="username" />
+      <input type="password" id="regPassword" placeholder="Password (min 4 caratteri)" autocomplete="new-password" />
+      <button id="registerBtn">Crea account</button>
+      <div id="registerError" class="login-error hidden"></div>
+    </div>
+  </div>
+</div>
+
+<!-- APP PRINCIPALE -->
+<div id="app" class="app hidden">
+
+  <button id="mobileMenuBtn" class="mobile-menu-btn">☰</button>
+
+  <!-- BARRA SERVER A SINISTRA -->
+  <aside class="servers-bar">
+    <div class="server-icon home active" id="homeBtn" title="Home">🍉</div>
+    <div class="server-divider"></div>
+    <div id="serversList" class="servers-list"></div>
+    <div class="server-icon add" id="addServerBtn" title="Crea server / GC">+</div>
+  </aside>
+
+  <!-- COLONNA CANALI / DM -->
+  <aside class="channels-bar">
+    <div class="channels-header" id="channelsHeader">Messaggi diretti</div>
+
+    <!-- VISTA HOME (DM + AMICI) -->
+    <div id="homeView" class="channels-body">
+      <button class="friends-btn" id="friendsBtn">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M16 11c1.66 0 2.99-1.34 2.99-3S17.66 5 16 5s-3 1.34-3 3 1.34 3 3 3zm-8 0c1.66 0 2.99-1.34 2.99-3S9.66 5 8 5 5 6.34 5 8s1.34 3 3 3zm0 2c-2.33 0-7 1.17-7 3.5V19h14v-2.5c0-2.33-4.67-3.5-7-3.5zm8 0c-.29 0-.62.02-.97.05 1.16.84 1.97 1.97 1.97 3.45V19h6v-2.5c0-2.33-4.67-3.5-7-3.5z"/></svg>
+        Amici
+        <span id="friendRequestBadge" class="badge hidden">0</span>
+      </button>
+      <button class="friends-btn" id="pollsBtn">📊 Sondaggi</button>
+      <button class="friends-btn" id="leaderboardBtn">🏆 Classifica</button>
+      <div class="section-label">MESSAGGI DIRETTI</div>
+      <div id="dmList" class="dm-list"></div>
+    </div>
+
+    <!-- VISTA GRUPPO (CANALI) -->
+    <div id="groupView" class="channels-body hidden">
+      <div class="group-header" id="groupHeader"></div>
+      <div class="section-label">CANALI TESTO</div>
+      <div id="textChannelsList"></div>
+      <div class="section-label">CANALI VOCALI</div>
+      <div id="voiceChannelsList"></div>
+    </div>
+
+    <!-- PANNELLO UTENTE IN BASSO -->
+    <div class="user-panel" id="userPanel">
+      <div class="avatar-wrap">
+        <img id="userPanelAvatar" class="avatar" src="" alt="" />
+        <span class="status-dot online"></span>
+      </div>
+      <div class="user-panel-info">
+        <div id="userPanelName" class="user-panel-name"></div>
+        <div class="user-panel-tag">In linea</div>
+      </div>
+      <button class="user-panel-btn" id="editProfileBtn" title="Modifica profilo">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M3 17.25V21h3.75l11-11-3.75-3.75L3 17.25zM20.7 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0L15.13 5.12l3.75 3.75 1.82-1.83z"/></svg>
+      </button>
+      <button class="user-panel-btn" id="logoutBtn" title="Cambia account / Esci">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M16 17v-3H9v-4h7V7l5 5-5 5zM14 2a2 2 0 0 1 2 2v2h-2V4H4v16h10v-2h2v2a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h10z"/></svg>
+      </button>
+    </div>
+  </aside>
+
+  <!-- AREA CHAT PRINCIPALE -->
+  <main class="main-area">
+    <header class="main-header" id="mainHeader">
+      <div class="main-header-title" id="mainHeaderTitle"></div>
+      <div class="main-header-actions" id="mainHeaderActions"></div>
+    </header>
+
+    <div class="main-body">
+      <div class="chat-area">
+        <div id="messagesList" class="messages-list"></div>
+        <div id="voiceConnectedBar" class="voice-connected-bar hidden">
+          <div>
+            <div class="voice-connected-title">Connesso al canale vocale</div>
+            <div id="voiceConnectedName" class="voice-connected-name"></div>
+          </div>
+          <button id="voiceDisconnectBtn" class="voice-disconnect">Disconnetti</button>
+        </div>
+        <div id="friendsPage" class="friends-page hidden">
+          <div class="friends-tabs">
+            <button class="friends-tab active" data-tab="all">Tutti</button>
+            <button class="friends-tab" data-tab="pending">In sospeso <span id="pendingCount" class="badge-inline hidden">0</span></button>
+            <button class="friends-tab" data-tab="add">Aggiungi amico</button>
+          </div>
+          <div id="friendsTabContent" class="friends-tab-content"></div>
+        </div>
+        <div id="pollsPage" class="friends-page hidden"></div>
+        <div id="leaderboardPage" class="friends-page hidden"></div>
+        <div id="inputContainer" class="input-container">
+          <div id="replyPreview" class="reply-preview hidden">
+            <span>Stai rispondendo a <b id="replyPreviewName"></b></span>
+            <button id="cancelReplyBtn">×</button>
+          </div>
+          <div id="editPreview" class="reply-preview hidden">
+            <span>Stai modificando il messaggio</span>
+            <button id="cancelEditBtn">×</button>
+          </div>
+          <div id="mentionPopup" class="mention-popup hidden"></div>
+          <div id="inputArea" class="input-area">
+            <button class="input-btn" id="attachBtn" title="Allega file">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="12" r="11" fill="#b9bbbe"/><path d="M12 6v12M6 12h12" stroke="#313338" stroke-width="2" stroke-linecap="round"/></svg>
+            </button>
+            <input type="file" id="fileInput" accept="image/*,video/*" hidden multiple />
+            <input type="text" id="messageInput" placeholder="Invia un messaggio" autocomplete="off" />
+            <button class="input-btn" id="selfDestructBtn" title="Auto-distruzione messaggi">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M11 17h2v-6h-2v6zm1-15a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm-1-9h2V7h-2v4z"/></svg>
+            </button>
+            <button class="input-btn" id="pollBtn" title="Crea un sondaggio">📊</button>
+            <button class="input-btn" id="recordBtn" title="Registra messaggio vocale">
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M12 14a3 3 0 0 0 3-3V5a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-3.08A7 7 0 0 0 19 11h-2z"/></svg>
+            </button>
+          </div>
+          <div id="selfDestructBar" class="self-destruct-bar hidden">
+            ⏱️ Auto-distruzione attiva: i prossimi messaggi spariranno dopo
+            <select id="selfDestructDuration">
+              <option value="10">10s</option>
+              <option value="20" selected>20s</option>
+              <option value="60">1 min</option>
+              <option value="300">5 min</option>
+              <option value="3600">1 ora</option>
+            </select>
+          </div>
+        </div>
+        <div id="recordingBar" class="recording-bar hidden">
+          <div class="rec-dot"></div>
+          <span>Registrazione in corso...</span>
+          <span id="recordingTime">00:00</span>
+          <button id="stopRecordBtn">Invia</button>
+          <button id="cancelRecordBtn">Annulla</button>
+        </div>
+      </div>
+
+      <!-- LISTA MEMBRI A DESTRA -->
+      <aside id="membersBar" class="members-bar">
+        <div class="members-title" id="membersTitle">Membri—0</div>
+        <div id="membersList"></div>
+      </aside>
+    </div>
+  </main>
+</div>
+
+<!-- MODALE: MODIFICA PROFILO -->
+<div id="profileModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2>Modifica profilo</h2>
+      <button class="modal-close" data-close="profileModal">×</button>
+    </div>
+    <div class="modal-body">
+      <label>Banner</label>
+      <div class="profile-banner-edit-wrap">
+        <img id="profileEditBanner" class="profile-banner-preview" src="" alt="" />
+        <label class="profile-edit-avatar-btn">
+          Cambia banner (anche GIF)
+          <input type="file" id="profileEditBannerInput" accept="image/*,image/gif" hidden />
+        </label>
+      </div>
+      <label>Avatar</label>
+      <div class="profile-edit-avatar-wrap">
+        <img id="profileEditAvatar" class="profile-edit-avatar" src="" alt="" />
+        <label class="profile-edit-avatar-btn">
+          Cambia avatar (anche GIF)
+          <input type="file" id="profileEditAvatarInput" accept="image/*,image/gif" hidden />
+        </label>
+      </div>
+      <label>Nome utente</label>
+      <input type="text" id="profileEditName" maxlength="24" />
+      <label>Bio</label>
+      <textarea id="profileEditBio" rows="3" maxlength="200"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-danger" id="resetDataBtn" title="Cancella tutto e ricomincia">Resetta dati</button>
+      <button class="btn-secondary" data-close="profileModal" style="margin-left:auto">Annulla</button>
+      <button class="btn-primary" id="profileEditSave">Salva</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODALE: CREA GRUPPO -->
+<div id="createGroupModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2>Crea un server o GC</h2>
+      <button class="modal-close" data-close="createGroupModal">×</button>
+    </div>
+    <div class="modal-body">
+      <label>Tipo</label>
+      <div class="type-toggle">
+        <button class="type-btn active" data-type="server">Server (canali multipli)</button>
+        <button class="type-btn" data-type="gc">Group Chat (chat veloce)</button>
+      </div>
+      <label>Nome</label>
+      <input type="text" id="newGroupName" maxlength="40" placeholder="Il mio server" />
+      <label>Icona (opzionale, anche GIF)</label>
+      <div class="profile-edit-avatar-wrap">
+        <img id="newGroupIcon" class="profile-edit-avatar" src="" alt="" />
+        <label class="profile-edit-avatar-btn">
+          Scegli icona
+          <input type="file" id="newGroupIconInput" accept="image/*,image/gif" hidden />
+        </label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" data-close="createGroupModal">Annulla</button>
+      <button class="btn-primary" id="createGroupSubmit">Crea</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODALE: CREA SONDAGGIO -->
+<div id="createPollModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2>Crea un sondaggio</h2>
+      <button class="modal-close" data-close="createPollModal">×</button>
+    </div>
+    <div class="modal-body">
+      <label>Domanda</label>
+      <input type="text" id="pollQuestion" maxlength="120" placeholder="Es. Chi gioca a Valorant?" />
+      <label>Opzioni</label>
+      <div id="pollOptionsWrap"></div>
+      <button id="addPollOptionBtn" class="login-secondary-btn">+ Aggiungi opzione</button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" data-close="createPollModal">Annulla</button>
+      <button class="btn-primary" id="createPollSubmit">Crea sondaggio</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODALE: AGGIUNGI MEMBRO AL GRUPPO -->
+<div id="addMemberModal" class="modal hidden">
+  <div class="modal-box">
+    <div class="modal-header">
+      <h2>Aggiungi membri</h2>
+      <button class="modal-close" data-close="addMemberModal">×</button>
+    </div>
+    <div class="modal-body">
+      <p class="muted">Seleziona gli amici da aggiungere al gruppo</p>
+      <div id="addMemberList" class="add-member-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn-secondary" data-close="addMemberModal">Chiudi</button>
+    </div>
+  </div>
+</div>
+
+<!-- POPUP PROFILO UTENTE (come Discord) -->
+<div id="profilePopup" class="profile-popup hidden">
+  <div class="profile-popup-banner">
+    <div class="profile-popup-banner-actions">
+      <button id="profileFriendToggleBtn" class="banner-icon-btn" title="Aggiungi amico"></button>
+      <button id="profileMoreBtn" class="banner-icon-btn" title="Altro">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/></svg>
+      </button>
+    </div>
+  </div>
+  <img id="profilePopupAvatar" class="profile-popup-avatar" src="" alt="" />
+  <div class="profile-popup-body">
+    <div id="profilePopupName" class="profile-popup-name"></div>
+    <div id="profilePopupTag" class="profile-popup-tag"></div>
+    <div class="profile-popup-divider"></div>
+    <div class="profile-popup-section-label">INFORMAZIONI</div>
+    <div id="profilePopupBio" class="profile-popup-bio"></div>
+    <div id="profilePopupMutual" class="profile-popup-mutual"></div>
+    <div id="profilePopupActions" class="profile-popup-actions"></div>
+  </div>
+</div>
+
+<!-- Menu contestuale (3 puntini del profilo) -->
+<div id="contextMenu" class="context-menu hidden"></div>
+
+<audio id="notifSound" preload="auto"></audio>
+
+<script src="app.js"></script>
+</body>
+</html>
